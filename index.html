@@ -117,6 +117,7 @@
       transition: opacity 0.8s ease-in-out;
     }
     .alt-image.visible { opacity: 1; }
+    video.alt-image { background: #000; }
 
     #entryInput {
       opacity: 0.15;
@@ -144,23 +145,21 @@
     <div id="displayOrders"></div>
   </div>
 
-  <div class="right-image-panel">
-    <img class="alt-image visible" src="OKNEXTV1_1.jpg" alt="">
-    <img class="alt-image" src="OKNEXTV1_2.jpg" alt="">
-  </div>
+  <div class="right-image-panel" id="mediaPanel"></div>
 
 </div>
 
 <audio id="ding" src="Ding-dong-sound.mp3" preload="auto"></audio>
 <input type="text" id="entryInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="none" />
 
+<script src="config.js"></script>
+<script src="schedule.js"></script>
 <script>
 (function () {
   'use strict';
 
   var MAX_ORDERS = 10;
   var MAX_CHARS = 7;
-  var IMAGE_INTERVAL_MS = 10000;
   var REFOCUS_INTERVAL_MS = 2000;
 
   var orders = [];
@@ -266,16 +265,141 @@
     focusInput();
   });
 
-  /* ---------- Image rotation (cross-fade) ---------- */
+  /* ---------- Right-hand media (scheduled from the admin page) ---------- */
 
-  var images = document.querySelectorAll('.alt-image');
-  var imgIndex = 0;
+  var cfg = window.QD_CONFIG || {};
+  var Sched = window.QDSchedule;
+  var panel = document.getElementById('mediaPanel');
+  var hasBackend = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY);
 
-  function alternateImage() {
-    if (images.length < 2) return;
-    images[imgIndex].classList.remove('visible');
-    imgIndex = (imgIndex + 1) % images.length;
-    images[imgIndex].classList.add('visible');
+  // Used when the backend is not set up, unreachable on first load, or nothing is scheduled right now.
+  var FALLBACK = [
+    { id: 'fb1', kind: 'image', url: 'OKNEXTV1_1.jpg', duration_s: 10 },
+    { id: 'fb2', kind: 'image', url: 'OKNEXTV1_2.jpg', duration_s: 10 }
+  ];
+
+  var rows = [];            // everything fetched from Supabase (enabled rows)
+  var currentKey = null;    // id of the item on screen
+  var currentEl = null;
+  var mediaTimer = null;
+
+  function mediaUrl(m) {
+    if (m.url) return m.url;
+    return cfg.SUPABASE_URL + '/storage/v1/object/public/media/' +
+      String(m.path).split('/').map(encodeURIComponent).join('/');
+  }
+
+  function activeList() {
+    var now = Sched.nowParts();
+    var list = rows.filter(function (m) { return Sched.isActive(m, now); });
+    return list.length ? list : FALLBACK;
+  }
+
+  function nextAfter(list, key) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === key) return list[(i + 1) % list.length];
+    }
+    return list[0];
+  }
+
+  function swapIn(el) {
+    var old = currentEl;
+    panel.appendChild(el);
+    // next frame so the opacity transition runs
+    requestAnimationFrame(function () { requestAnimationFrame(function () { el.classList.add('visible'); }); });
+    if (old) {
+      old.classList.remove('visible');
+      setTimeout(function () { if (old.parentNode) old.parentNode.removeChild(old); }, 1000);
+    }
+    currentEl = el;
+  }
+
+  function playNext() {
+    clearTimeout(mediaTimer);
+    var list = activeList();
+    var item = nextAfter(list, currentKey);
+    var single = list.length === 1;
+
+    // Only one item and it is already showing: nothing to reload, just check again later.
+    if (single && item.id === currentKey) {
+      mediaTimer = setTimeout(playNext, item.kind === 'video' ? 30000 : Math.max(5, item.duration_s || 10) * 1000);
+      return;
+    }
+
+    var failed = false;
+    function fail() {
+      if (failed) return;
+      failed = true;
+      currentKey = item.id; // move on to the next one rather than retrying forever
+      mediaTimer = setTimeout(playNext, 3000);
+    }
+
+    var el;
+    if (item.kind === 'video') {
+      el = document.createElement('video');
+      el.className = 'alt-image';
+      el.muted = true;
+      el.setAttribute('muted', '');
+      el.setAttribute('playsinline', '');
+      el.preload = 'auto';
+      el.loop = single;
+      el.onerror = fail;
+      el.onplaying = function () {
+        if (failed || el === currentEl) return;
+        currentKey = item.id;
+        swapIn(el);
+        // Videos play to the end; this is only a safety net for a stalled stream.
+        clearTimeout(mediaTimer);
+        mediaTimer = setTimeout(playNext, single ? 30000 : 10 * 60 * 1000);
+      };
+      el.onended = function () { if (!el.loop) playNext(); };
+      el.src = mediaUrl(item);
+      var p = el.play();
+      if (p && typeof p.catch === 'function') p.catch(fail);
+    } else {
+      el = new Image();
+      el.className = 'alt-image';
+      el.alt = '';
+      el.onerror = fail;
+      el.onload = function () {
+        if (failed) return;
+        currentKey = item.id;
+        swapIn(el);
+        mediaTimer = setTimeout(playNext, Math.max(3, item.duration_s || 10) * 1000);
+      };
+      el.src = mediaUrl(item);
+    }
+  }
+
+  function loadCachedRows() {
+    try {
+      var saved = JSON.parse(localStorage.getItem('qd_rows') || 'null');
+      if (saved && saved.length) rows = saved;
+    } catch (e) {}
+  }
+
+  function fetchRows() {
+    if (!hasBackend || !window.fetch) return;
+    var url = cfg.SUPABASE_URL + '/rest/v1/media?select=*&enabled=eq.true&order=sort.asc,created_at.asc';
+    fetch(url, {
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + cfg.SUPABASE_ANON_KEY },
+      cache: 'no-store'
+    })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (data) {
+        rows = data;
+        try { localStorage.setItem('qd_rows', JSON.stringify(data)); } catch (e) {}
+        // First real list arrived while the bundled images are showing: switch over now.
+        if (currentKey && currentKey.indexOf('fb') === 0 && data.length) playNext();
+      })
+      .catch(function () { /* keep showing what we have; try again next time */ });
+  }
+
+  function startMedia() {
+    loadCachedRows();
+    playNext();                    // show something immediately (cached list or bundled images)
+    fetchRows();
+    setInterval(fetchRows, Math.max(15, cfg.REFRESH_SECONDS || 60) * 1000);
   }
 
   /* ---------- Startup ---------- */
@@ -292,7 +416,7 @@
     setInterval(focusInput, REFOCUS_INTERVAL_MS);
     inputEl.addEventListener('blur', function () { setTimeout(focusInput, 0); });
 
-    setInterval(alternateImage, IMAGE_INTERVAL_MS);
+    startMedia();
   };
 })();
 </script>

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Queue Display Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <style>
+    :root {
+      --bg: #f4f5f7; --card: #fff; --text: #1c1e21; --muted: #6b7280; --line: #e2e4e9;
+      --accent: #2563eb; --ok: #16a34a; --warn: #d97706; --off: #9ca3af; --danger: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111317; --card: #1b1e24; --text: #e8eaee; --muted: #9aa1ad; --line: #2b2f37; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+    header h1 { font-size: 18px; margin: 0; flex: 1; }
+    main { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    button, input, select { font: inherit; color: inherit; }
+    button { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { color: var(--danger); }
+    button:disabled { opacity: .5; cursor: default; }
+    input[type=text], input[type=email], input[type=password], input[type=number], input[type=date], input[type=time] {
+      border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 7px 9px; width: 100%;
+    }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .row > div { flex: 1 1 130px; }
+    .hidden { display: none !important; }
+    #login { max-width: 340px; margin: 12vh auto; }
+    #login .row > div { flex-basis: 100%; margin-bottom: 8px; }
+    .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); }
+    .drop.over { border-color: var(--accent); color: var(--accent); }
+    .item { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+    .item:first-child { border-top: 0; }
+    .thumb { width: 96px; height: 54px; border-radius: 6px; background: #000; object-fit: cover; display: block; }
+    .name { font-weight: 600; word-break: break-all; }
+    .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; color: #fff; margin-right: 6px; }
+    .badge.live { background: var(--ok); } .badge.wait { background: var(--warn); } .badge.off { background: var(--off); }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .edit { grid-column: 1 / -1; background: var(--bg); border-radius: 10px; padding: 12px; }
+    .days label { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 13px; color: var(--text); }
+    #msg { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #111; color: #fff; padding: 9px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    #msg.show { opacity: 1; }
+    @media (max-width: 600px) { .item { grid-template-columns: 72px 1fr; } .thumb { width: 72px; height: 41px; } .actions { grid-column: 1 / -1; justify-content: flex-start; } }
+  </style>
+</head>
+<body>
+
+<div id="setup" class="card hidden" style="max-width:520px;margin:10vh auto">
+  <h2>Not set up yet</h2>
+  <p class="muted">Open <code>config.js</code> and fill in <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code>. See README.md.</p>
+</div>
+
+<div id="login" class="card hidden">
+  <h2>Queue Display Admin</h2>
+  <form id="loginForm">
+    <div class="row">
+      <div><label for="email">Email</label><input type="email" id="email" required autocomplete="username"></div>
+      <div><label for="password">Password</label><input type="password" id="password" required autocomplete="current-password"></div>
+    </div>
+    <button class="primary" type="submit" style="width:100%">Sign in</button>
+    <p id="loginErr" class="muted" style="color:var(--danger)"></p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1>Queue Display Admin</h1>
+    <span class="muted" id="clock"></span>
+    <button id="logout">Sign out</button>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2>Upload</h2>
+      <div class="drop" id="drop">
+        Drop images or videos here, or <button id="pick" type="button">choose files</button>
+        <input type="file" id="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm" multiple class="hidden">
+        <div class="muted" style="margin-top:6px">JPG, PNG, WebP, GIF, MP4, WebM &middot; max 50&nbsp;MB each &middot; best size 1280&times;1080 (the right two-thirds of the screen)</div>
+      </div>
+      <div id="uploadStatus" class="muted" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Content <span class="muted" id="count"></span></h2>
+      <p class="muted" style="margin-top:0">Items play top to bottom, then repeat. An item with no schedule plays all the time. If nothing is scheduled right now, the TV falls back to the built-in images. The TV checks for changes about once a minute.</p>
+      <div id="list"></div>
+    </div>
+  </main>
+</div>
+
+<div id="msg"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="schedule.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var cfg = window.QD_CONFIG || {};
+  var Sched = window.QDSchedule;
+  var $ = function (id) { return document.getElementById(id); };
+
+  if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || !window.supabase) {
+    $('setup').classList.remove('hidden');
+    return;
+  }
+
+  var db = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  var items = [];
+  var openEdit = null; // id of the row whose editor is open
+
+  function toast(text) {
+    var m = $('msg');
+    m.textContent = text;
+    m.classList.add('show');
+    clearTimeout(toast.t);
+    toast.t = setTimeout(function () { m.classList.remove('show'); }, 2500);
+  }
+
+  function publicUrl(path) {
+    return db.storage.from('media').getPublicUrl(path).data.publicUrl;
+  }
+
+  /* ---------- Auth ---------- */
+
+  function showApp(signedIn) {
+    $('login').classList.toggle('hidden', signedIn);
+    $('app').classList.toggle('hidden', !signedIn);
+    if (signedIn) load();
+  }
+
+  db.auth.getSession().then(function (r) { showApp(!!r.data.session); });
+  db.auth.onAuthStateChange(function (_e, session) { showApp(!!session); });
+
+  $('loginForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    $('loginErr').textContent = '';
+    db.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value })
+      .then(function (r) { if (r.error) $('loginErr').textContent = r.error.message; });
+  });
+  $('logout').addEventListener('click', function () { db.auth.signOut(); });
+
+  /* ---------- Data ---------- */
+
+  function load() {
+    return db.from('media').select('*').order('sort', { ascending: true }).order('created_at', { ascending: true })
+      .then(function (r) {
+        if (r.error) { toast('Load failed: ' + r.error.message); return; }
+        items = r.data;
+        render();
+      });
+  }
+
+  function update(id, patch) {
+    return db.from('media').update(patch).eq('id', id).then(function (r) {
+      if (r.error) { toast('Save failed: ' + r.error.message); return false; }
+      return true;
+    });
+  }
+
+  /* ---------- Rendering ---------- */
+
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+
+  function status(m, now) {
+    if (!m.enabled) return ['off', 'Off'];
+    if (Sched.isActive(m, now)) return ['live', 'Playing now'];
+    return ['wait', 'Scheduled'];
+  }
+
+  function render() {
+    var now = Sched.nowParts();
+    var list = $('list');
+    list.innerHTML = '';
+    $('count').textContent = items.length ? '(' + items.length + ')' : '';
+    if (!items.length) list.appendChild(el('p', 'muted', 'Nothing uploaded yet. The TV is showing the built-in images.'));
+
+    items.forEach(function (m, i) {
+      var row = el('div', 'item');
+
+      var url = publicUrl(m.path);
+      var thumb;
+      if (m.kind === 'video') {
+        thumb = el('video', 'thumb');
+        thumb.src = url; thumb.muted = true; thumb.preload = 'metadata';
+      } else {
+        thumb = el('img', 'thumb');
+        thumb.src = url; thumb.alt = '';
+      }
+      row.appendChild(thumb);
+
+      var info = el('div');
+      info.appendChild(el('div', 'name', m.name));
+      var st = status(m, now);
+      var line = el('div', 'muted');
+      line.appendChild(el('span', 'badge ' + st[0], st[1]));
+      line.appendChild(document.createTextNode(
+        Sched.describe(m) + (m.kind === 'video' ? ' · plays to end' : ' · ' + m.duration_s + 's')));
+      info.appendChild(line);
+      row.appendChild(info);
+
+      var act = el('div', 'actions');
+      var up = el('button', '', '↑'); up.disabled = i === 0; up.title = 'Move up';
+      up.onclick = function () { move(i, -1); };
+      var down = el('button', '', '↓'); down.disabled = i === items.length - 1; down.title = 'Move down';
+      down.onclick = function () { move(i, 1); };
+      var ed = el('button', '', openEdit === m.id ? 'Close' : 'Edit / schedule');
+      ed.onclick = function () { openEdit = openEdit === m.id ? null : m.id; render(); };
+      var del = el('button', 'danger', 'Delete');
+      del.onclick = function () { remove(m); };
+      [up, down, ed, del].forEach(function (b) { act.appendChild(b); });
+      row.appendChild(act);
+
+      if (openEdit === m.id) row.appendChild(editor(m));
+      list.appendChild(row);
+    });
+  }
+
+  function field(labelText, input) {
+    var d = el('div');
+    var l = el('label', '', labelText);
+    d.appendChild(l); d.appendChild(input);
+    return d;
+  }
+
+  function editor(m) {
+    var box = el('div', 'edit');
+
+    var name = el('input'); name.type = 'text'; name.value = m.name;
+    var dur = el('input'); dur.type = 'number'; dur.min = 1; dur.max = 3600; dur.value = m.duration_s;
+    if (m.kind === 'video') dur.disabled = true;
+    var enabled = el('input'); enabled.type = 'checkbox'; enabled.checked = m.enabled;
+    var enWrap = el('label'); enWrap.style.color = 'var(--text)';
+    enWrap.appendChild(enabled); enWrap.appendChild(document.createTextNode(' Enabled'));
+
+    var r1 = el('div', 'row');
+    r1.appendChild(field('Name', name));
+    r1.appendChild(field(m.kind === 'video' ? 'Duration (videos play to the end)' : 'Seconds on screen', dur));
+    var ew = el('div'); ew.appendChild(enWrap); r1.appendChild(ew);
+    box.appendChild(r1);
+
+    box.appendChild(el('p', 'muted', 'Schedule — leave blank to play all the time. Times are ' + Sched.timezone + '.'));
+
+    var sd = el('input'); sd.type = 'date'; sd.value = m.start_date || '';
+    var ed = el('input'); ed.type = 'date'; ed.value = m.end_date || '';
+    var st = el('input'); st.type = 'time'; st.value = (m.start_time || '').slice(0, 5);
+    var et = el('input'); et.type = 'time'; et.value = (m.end_time || '').slice(0, 5);
+
+    var r2 = el('div', 'row');
+    r2.appendChild(field('From date', sd));
+    r2.appendChild(field('Until date (inclusive)', ed));
+    r2.appendChild(field('From time', st));
+    r2.appendChild(field('Until time', et));
+    box.appendChild(r2);
+
+    var daysWrap = el('div', 'days');
+    daysWrap.style.marginTop = '10px';
+    var boxes = DAYS.map(function (d, i) {
+      var l = el('label'); l.style.display = 'inline-flex';
+      var c = el('input'); c.type = 'checkbox';
+      c.checked = !m.days || !m.days.length || m.days.indexOf(i) !== -1;
+      l.appendChild(c); l.appendChild(document.createTextNode(d));
+      daysWrap.appendChild(l);
+      return c;
+    });
+    box.appendChild(daysWrap);
+
+    var save = el('button', 'primary', 'Save');
+    save.style.marginTop = '12px';
+    save.onclick = function () {
+      var picked = [];
+      boxes.forEach(function (c, i) { if (c.checked) picked.push(i); });
+      if (sd.value && ed.value && sd.value > ed.value) { toast('"From date" is after "Until date"'); return; }
+      var patch = {
+        name: name.value.trim() || m.name,
+        enabled: enabled.checked,
+        start_date: sd.value || null,
+        end_date: ed.value || null,
+        start_time: st.value || null,
+        end_time: et.value || null,
+        days: picked.length === 7 || picked.length === 0 ? null : picked
+      };
+      if (m.kind === 'image') patch.duration_s = Math.min(3600, Math.max(1, parseInt(dur.value, 10) || 10));
+      save.disabled = true;
+      update(m.id, patch).then(function (ok) {
+        save.disabled = false;
+        if (ok) { toast('Saved'); openEdit = null; load(); }
+      });
+    };
+    box.appendChild(save);
+    return box;
+  }
+
+  /* ---------- Actions ---------- */
+
+  function move(i, dir) {
+    var j = i + dir;
+    if (j < 0 || j >= items.length) return;
+    var tmp = items[i]; items[i] = items[j]; items[j] = tmp;
+    // Renumber so the order is unambiguous even if sort values were equal.
+    var jobs = items.map(function (m, idx) { m.sort = idx; return update(m.id, { sort: idx }); });
+    render();
+    Promise.all(jobs).then(function () { toast('Order saved'); });
+  }
+
+  function remove(m) {
+    if (!confirm('Delete "' + m.name + '"? This cannot be undone.')) return;
+    db.from('media').delete().eq('id', m.id).then(function (r) {
+      if (r.error) { toast('Delete failed: ' + r.error.message); return; }
+      db.storage.from('media').remove([m.path]);
+      toast('Deleted');
+      load();
+    });
+  }
+
+  /* ---------- Upload ---------- */
+
+  function extOf(file) {
+    var m = /\.([a-z0-9]+)$/i.exec(file.name);
+    if (m) return m[1].toLowerCase();
+    return (file.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+  }
+
+  function uploadFiles(files) {
+    files = Array.prototype.slice.call(files).filter(function (f) {
+      return /^(image|video)\//.test(f.type);
+    });
+    if (!files.length) { toast('Only images and videos can be uploaded'); return; }
+
+    var next = items.reduce(function (mx, m) { return Math.max(mx, m.sort); }, -1) + 1;
+    var done = 0;
+    var chain = Promise.resolve();
+
+    files.forEach(function (file) {
+      chain = chain.then(function () {
+        if (file.size > 50 * 1024 * 1024) { toast(file.name + ' is over 50 MB, skipped'); return; }
+        $('uploadStatus').textContent = 'Uploading ' + file.name + ' (' + (done + 1) + ' of ' + files.length + ')…';
+        var path = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)) + '.' + extOf(file);
+        return db.storage.from('media').upload(path, file, { contentType: file.type, cacheControl: '3600' })
+          .then(function (r) {
+            if (r.error) throw r.error;
+            return db.from('media').insert({
+              name: file.name,
+              kind: file.type.indexOf('video/') === 0 ? 'video' : 'image',
+              path: path,
+              sort: next++
+            });
+          })
+          .then(function (r) { if (r.error) throw r.error; done++; })
+          .catch(function (err) { toast('Upload failed: ' + (err.message || err)); });
+      });
+    });
+
+    chain.then(function () {
+      $('uploadStatus').textContent = done ? 'Uploaded ' + done + ' file' + (done > 1 ? 's' : '') + '.' : '';
+      $('file').value = '';
+      load();
+    });
+  }
+
+  $('pick').addEventListener('click', function () { $('file').click(); });
+  $('file').addEventListener('change', function (e) { if (e.target.files.length) uploadFiles(e.target.files); });
+
+  var drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (n) {
+    drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (n) {
+    drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) { if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files); });
+
+  /* ---------- Clock (so "Playing now" is easy to trust) ---------- */
+
+  function tick() {
+    var n = Sched.nowParts();
+    $('clock').textContent = n.date + ' ' + n.time + ' (' + Sched.timezone + ')';
+  }
+  tick();
+  setInterval(function () { tick(); if (!$('app').classList.contains('hidden') && openEdit === null) render(); }, 30000);
+})();
+</script>
+</body>
+</html>
