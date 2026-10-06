@@ -46,6 +46,9 @@
     .actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
     .edit { grid-column: 1 / -1; background: var(--bg); border-radius: 10px; padding: 12px; }
     .days label { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 13px; color: var(--text); }
+    .secs { width: 64px; padding: 3px 6px; margin: 0 4px; }
+    .fallback { opacity: .85; }
+    .fallback .item { grid-template-columns: 96px 1fr; }
     #msg { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #111; color: #fff; padding: 9px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
     #msg.show { opacity: 1; }
     @media (max-width: 600px) { .item { grid-template-columns: 72px 1fr; } .thumb { width: 72px; height: 41px; } .actions { grid-column: 1 / -1; justify-content: flex-start; } }
@@ -189,7 +192,7 @@
     var list = $('list');
     list.innerHTML = '';
     $('count').textContent = items.length ? '(' + items.length + ')' : '';
-    if (!items.length) list.appendChild(el('p', 'muted', 'Nothing uploaded yet. The TV is showing the built-in images.'));
+    if (!items.length) list.appendChild(el('p', 'muted', 'Nothing uploaded yet.'));
 
     items.forEach(function (m, i) {
       var row = el('div', 'item');
@@ -210,8 +213,22 @@
       var st = status(m, now);
       var line = el('div', 'muted');
       line.appendChild(el('span', 'badge ' + st[0], st[1]));
-      line.appendChild(document.createTextNode(
-        Sched.describe(m) + (m.kind === 'video' ? ' · plays to end' : ' · ' + m.duration_s + 's')));
+      line.appendChild(document.createTextNode(Sched.describe(m) + ' · '));
+      if (m.kind === 'video') {
+        line.appendChild(document.createTextNode('plays to the end'));
+      } else {
+        line.appendChild(document.createTextNode('shows for'));
+        var secs = el('input', 'secs');
+        secs.type = 'number'; secs.min = 1; secs.max = 3600; secs.value = m.duration_s;
+        secs.title = 'Seconds on screen';
+        secs.onchange = function () {
+          var v = Math.min(3600, Math.max(1, parseInt(secs.value, 10) || 10));
+          secs.value = v;
+          update(m.id, { duration_s: v }).then(function (ok) { if (ok) { m.duration_s = v; toast('Saved: ' + v + ' seconds'); } });
+        };
+        line.appendChild(secs);
+        line.appendChild(document.createTextNode('seconds'));
+      }
       info.appendChild(line);
       row.appendChild(info);
 
@@ -230,6 +247,57 @@
       if (openEdit === m.id) row.appendChild(editor(m));
       list.appendChild(row);
     });
+
+    renderFallback(list);
+  }
+
+  var BUILTIN = ['OKNEXTV1_1.jpg', 'OKNEXTV1_2.jpg'];
+
+  function renderFallback(list) {
+    var box = el('div', 'fallback');
+    box.style.marginTop = '18px';
+    box.appendChild(el('h2', '', 'Built-in default images'));
+    var noneLive = !items.some(function (m) { return Sched.isActive(m); });
+    box.appendChild(el('p', 'muted', noneLive
+      ? 'These are what the TV is showing right now (10 seconds each), because nothing uploaded is playing at the moment.'
+      : 'The TV shows these (10 seconds each) whenever nothing uploaded is playing.'));
+    BUILTIN.forEach(function (f) {
+      var row = el('div', 'item');
+      var img = el('img', 'thumb'); img.src = f; img.alt = '';
+      row.appendChild(img);
+      var info = el('div');
+      info.appendChild(el('div', 'name', f));
+      info.appendChild(el('div', 'muted', 'Built-in · fixed at 10 seconds'));
+      row.appendChild(info);
+      box.appendChild(row);
+    });
+    var imp = el('button', 'primary', 'Import these so I can change their time, order and schedule');
+    imp.onclick = function () { importBuiltin(imp); };
+    box.appendChild(imp);
+    list.appendChild(box);
+  }
+
+  function importBuiltin(btn) {
+    btn.disabled = true;
+    var next = items.reduce(function (mx, m) { return Math.max(mx, m.sort); }, -1) + 1;
+    var chain = Promise.resolve();
+    BUILTIN.forEach(function (f) {
+      chain = chain.then(function () {
+        return fetch(f).then(function (r) { if (!r.ok) throw new Error('Could not read ' + f); return r.blob(); })
+          .then(function (blob) {
+            var path = (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())) + '.jpg';
+            return db.storage.from('media').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '3600' })
+              .then(function (r) {
+                if (r.error) throw r.error;
+                return db.from('media').insert({ name: f, kind: 'image', path: path, sort: next++ });
+              })
+              .then(function (r) { if (r.error) throw r.error; });
+          });
+      });
+    });
+    chain.then(function () { toast('Imported. You can now edit them.'); })
+      .catch(function (err) { toast('Import failed: ' + (err.message || err)); })
+      .then(function () { btn.disabled = false; load(); });
   }
 
   function field(labelText, input) {
@@ -393,7 +461,7 @@
     $('clock').textContent = n.date + ' ' + n.time + ' (' + Sched.timezone + ')';
   }
   tick();
-  setInterval(function () { tick(); if (!$('app').classList.contains('hidden') && openEdit === null) render(); }, 30000);
+  setInterval(function () { tick(); if (!$('app').classList.contains('hidden') && openEdit === null && !(document.activeElement && document.activeElement.tagName === 'INPUT')) render(); }, 30000);
 })();
 </script>
 </body>
